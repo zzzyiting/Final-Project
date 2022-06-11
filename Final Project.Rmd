@@ -1,0 +1,559 @@
+---
+title: "Final Project"
+author: "Yiting Zhang"
+date: '2022-06-10'
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: show
+  pdf_document:
+    toc: yes
+---
+
+
+## Introduction
+
+The purpose of this project is to generate a model that will predict the customer churn of the telecom company based on the customer's attribute.
+
+### Customer Churn
+
+Customer churn, also known as customer attrition, customer turnover, or customer defection, is the loss of clients or customers.
+
+Customer churn analysis is frequently used by telephone service providers, Internet service providers, pay TV companies, insurance firms, and alarm monitoring services as one of their key business metrics because retaining an existing customer is far less expensive than acquiring a new one. Companies in these sectors frequently have customer service branches that aim to re-engage defectioning consumers, as recovered long-term customers are worth far more to a company than newly recruited customers.
+
+### Why might this model be useful?
+
+Typically, companies distinguish between voluntary and involuntary churn. Involuntary churn happens when a client chooses to switch to another company or service provider, while voluntary churn occurs when a customer is forced to move to a long-term care facility or a new area, or dies.In most cases, involuntary factors for churn are not taken into account in analytical models. Analysts tend to focus on voluntary churn since it is generally caused by features of the company-customer relationship that are under the company's control, such as how billing interactions are handled or how after-sales assistance is offered.
+
+Churn prediction models are used in predictive analytics to estimate customer attrition by measuring their risk of churn. These models are effective in focusing customer retention marketing activities on the fraction of the customer base that is most prone to churn because they generate a short prioritized list of potential defectors.
+
+Therefore, the “churn” column is chosen as target and the following predictive analysis is a supervised classification problem.
+
+### Loading Data and Packages
+
+Original data can be found here: https://www.kaggle.com/becksddf/churn-in-telecoms-dataset/data
+
+While a complete copy of the codebook may be found in my files, the following are some of the relevant variables to be aware of for this report:
+
+Customers who left within the last month – Churn
+
+Services that each customer has signed up for – phone, multiple lines, internet, online security, online backup, device protection, tech support, and streaming TV and movies
+
+Customer account information - how long they’ve been a customer, contract, payment method, paperless billing, monthly charges, and total charges
+
+Demographic information about the customers – gender, age range, and if they have partners and dependents or not
+
+```{r, message=F}
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(sqldf)
+library(psych)
+library(Hmisc)
+library(VIM)
+library(caret)
+library(factoextra)
+library(xgboost)
+library(kknn)
+library(kernlab)
+# set seed
+set.seed(1)
+```
+
+
+```{r}
+# read the data
+telcom <- read.csv("data/unprocessed/WA_Fn-UseC_-Telco-Customer-Churn.csv")
+# describe the stats
+#head(telcom)
+#describe(telcom)
+```
+## Exploratory Data Analysis
+
+### Cusomer Attrition in Data
+
+How many customers left within last month can examined by looking at the `Churn` column. 
+Around 26% of the customers left the platform within the last month.
+```{r}
+# distribution graph for 5 non-numeric variables and 2 numberic variables
+churn_count <- sqldf("select churn, count(1) as count from telcom group by churn")
+p1 <- ggplot(data=churn_count,aes(x=Churn, y=count, fill=Churn)) + geom_col() + ggtitle ('Customer Attrition in Data')
+p1
+```
+
+### Variable Distributions
+
+We can first visualize the categorical data with respect to churn:
+
+
+
+#### Categorical Variable Distributions
+
+
+
+- `Gender`- The churn percent is almost equal in case of Male and Females.
+
+
+There is no discernible variation in the percentage of customers that switched service providers- when it came to switching to a new service provider or company, all genders behaved similarly.
+
+```{r}
+gender_count <- sqldf("select gender, count(1) as count from telcom group by gender")
+p2 <- ggplot(data=gender_count, aes(x=gender, y=count, fill=gender)) + geom_col() + ggtitle ('Distribution of Gender')
+p2
+```
+
+
+- `SeniorCitizen`- The percent of churn is higher in case of senior citizens
+
+
+Senior citizens make up a small percentage of the population. The majority of senior citizens are churning.
+
+
+```{r}
+seniorcitizen_count <- sqldf("select seniorcitizen, count(1) as count from telcom group by seniorcitizen")
+p3 <- ggplot(data=seniorcitizen_count, aes(x=SeniorCitizen, y=count, fill=SeniorCitizen)) + geom_col() + ggtitle ('Distribution of SeniorCitizen')
+p3
+```
+
+
+- `Partner` - Those with partners have a lower churn rate.
+```{r}
+partner_count <- sqldf("select Partner, count(1) as count from telcom group by Partner")
+p4 <- ggplot(data=partner_count, aes(x=Partner, y=count, fill=Partner)) + geom_col() + ggtitle ('Distribution of Partner')
+p4
+```
+
+
+- `Dependent` - Customers that doesn't have dependents are more likely to churn.
+```{r}
+dependents_count <- sqldf("select Dependents, count(1) as count from telcom group by Dependents")
+p5 <- ggplot(data=dependents_count, aes(x=Dependents, y=count, fill=Dependents)) + geom_col() + ggtitle ('Distribution of Dependents')
+p5
+```
+
+#### Numerical Variable Distributions
+
+- `tenure` - Customers who have left have a median duration of roughly ten months, which means new customers are more likely to churn
+```{r}
+tenure_count <- sqldf("select tenure, count(1) as count from telcom group by tenure")
+p6 <- ggplot(data=tenure_count, aes(x=tenure, y=count, fill=tenure)) + geom_col() + ggtitle ('Distribution of tenure')
+p6
+```
+
+
+- `MonthlyCharges` - Customers with higher Monthly Charges are also more likely to churn with a median above 75.
+
+
+```{r}
+monthly_charges_count <- as.data.frame(table(cut(telcom$MonthlyCharges, breaks=10)))
+p7 <- ggplot(data=monthly_charges_count, aes(x=Var1, y=Freq, fill=Var1)) + geom_col() + ggtitle ('Distribution of MonthlyCharges') + theme(axis.text.x = element_blank()) + xlab("MonthlyCharges")
+p7
+```
+
+- `TotalCharges` - The median total charges of customers who have churned is low.
+```{r}
+total_charges_count <- as.data.frame(table(cut(telcom$TotalCharges, breaks=10)))
+p8 <- ggplot(data=total_charges_count, aes(x=Var1, y=Freq, fill=Var1)) + geom_col() + ggtitle ('Distribution of TotalCharges') + theme(axis.text.x = element_blank()) + xlab("TotalCharges")
+p8
+```
+
+### Dealing with NAs
+
+There are 11 missing data in the TotalCharge column. 
+
+```{r}
+# imputation with the median
+aggr(telcom$TotalCharges, prop=FALSE, numbers=TRUE)
+telcom$TotalCharges=impute(telcom$TotalCharges, median)
+```
+
+I decide to use the median imputation to handle the missing data
+
+```{r}
+aggr(telcom$MonthlyCharges, prop=FALSE, numbers=TRUE)
+aggr(telcom$SeniorCitizen, prop=FALSE, numbers=TRUE)
+aggr(telcom$tenure, prop=FALSE, numbers=TRUE)
+
+save(telcom, file = "data/processed/telcom.Rdata")
+```
+
+
+## Feature Extraction
+
+We would like to one hot encoding categorical variable with different boolean variables (also called dummy variables) which take values 0 or 1, indicating if a category is present in an observation.And we also want to perform Principal Component Analysis (PCA) on numerical variables.Then we combine the one hot and PCA to make the feature.
+
+```{r}
+gender <- as.data.frame(model.matrix(~gender-1,telcom))
+Partner <- as.data.frame(model.matrix(~Partner-1,telcom))
+Dependents <- as.data.frame(model.matrix(~Dependents-1,telcom))
+PhoneService <- as.data.frame(model.matrix(~PhoneService-1,telcom))
+MultipleLines <- as.data.frame(model.matrix(~MultipleLines-1,telcom))
+InternetService <- as.data.frame(model.matrix(~InternetService-1,telcom))
+OnlineSecurity <- as.data.frame(model.matrix(~OnlineSecurity-1,telcom))
+OnlineBackup <- as.data.frame(model.matrix(~OnlineBackup-1,telcom))
+DeviceProtection <- as.data.frame(model.matrix(~DeviceProtection-1,telcom))
+TechSupport <- as.data.frame(model.matrix(~TechSupport-1,telcom))
+StreamingTV <- as.data.frame(model.matrix(~StreamingTV-1,telcom))
+StreamingMovies <- as.data.frame(model.matrix(~StreamingMovies-1,telcom))
+Contract <- as.data.frame(model.matrix(~Contract-1,telcom))
+PaperlessBilling <- as.data.frame(model.matrix(~PaperlessBilling-1,telcom))
+PaymentMethod <- as.data.frame(model.matrix(~PaymentMethod-1,telcom))
+Churn <- as.data.frame(model.matrix(~Churn-1,telcom))
+```
+
+```{r}
+num_features <- data.frame(telcom['SeniorCitizen'], telcom['tenure'], telcom['MonthlyCharges'], telcom['TotalCharges'])
+num_features_scaled <- as.matrix(scale(num_features))
+```
+
+```{r}
+onehot_features <- cbind(
+  gender, Partner, Dependents, PhoneService, MultipleLines, InternetService,
+  OnlineSecurity, OnlineBackup, DeviceProtection, TechSupport, StreamingMovies,
+  StreamingTV, Contract, PaperlessBilling, PaymentMethod, num_features_scaled)
+```
+
+
+By visualizing the percentage of explained variances and the data points of the original  data points, we ensure the PCA is doing a linear transformation of the original data
+```{r}
+pca_result <- prcomp(onehot_features, scale=T)
+summary(pca_result)
+fviz_screeplot(pca_result, addlabels = TRUE)
+fviz_pca_ind(pca_result, label="none",addEllipses=TRUE, ellipse.level=0.95, 
+             palette = c("#999999", "#E69F00"), habillage=telcom$Churn)
+```
+
+
+
+```{r}
+dataset <- cbind(onehot_features, Churn)
+save(dataset, file = 'data/processed/dataset.Rdata')
+```
+
+## Splitting the Data
+
+I decided to split the data with a .8 proportion
+```{r}
+
+load('data/processed/dataset.Rdata')
+dataset <- subset(dataset, select = -ChurnNo)
+```
+
+```{r}
+train_index = createDataPartition(dataset$ChurnYes, times = 1, p = 0.8, list = F)
+train_data = dataset[train_index, ]
+test_data = dataset[-train_index, ]
+```
+
+```{r}
+prop.table(with(train_data, table(ChurnYes)))
+prop.table(with(test_data, table(ChurnYes)))
+prop.table(with(dataset, table(ChurnYes)))
+save(train_data, file = 'data/processed/train_data.Rdata')
+save(test_data, file = 'data/processed/test_data.Rdata')
+```
+## Model Building
+
+We will try four models: boosted tree model, knn model, random forest model, and SVM model. For each model, we first use 80% of the data to make cross validation training. After parameter tuning, we fit the model into 20% testing data to test its accuracy.
+
+### Boosted Tree model
+
+A boosted model builds a weak decision tree that has low predictive accuracy. Then the model goes through the process of sequentially improving previous decision trees. Doing this, slowly reduces the bias at each step without drastically increasing the variance.
+
+
+```{r}
+set.seed(1)
+train_data[['ChurnYes']] = factor(train_data[['ChurnYes']])
+
+mobile_split <- initial_split(train_data, prop = 0.9, strata = ChurnYes)
+mobile_training <- mobile_split %>% training()
+mobile_test <- mobile_split %>% testing()
+
+mobile_folds <- vfold_cv(mobile_training, v = 3)
+
+mobile_recipe <- recipe(ChurnYes ~ ., data = train_data) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+mobile_recipe %>% 
+  prep(training = train_data) %>% 
+  bake(new_data = NULL)
+
+tree_model <-
+  boost_tree(trees = tune(),min_n = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("xgboost")
+
+tree_wf <- workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(mobile_recipe)
+
+grid <- grid_regular(trees(), min_n(), levels = 5)
+
+tree_tuning <- tree_wf %>% 
+  tune_grid(resamples = mobile_folds,
+            grid = grid)
+```
+
+```{r}
+set.seed(1)
+best <- tree_tuning %>% 
+  select_best(metric = 'roc_auc')
+
+final_tree_wf <- tree_wf %>% 
+  finalize_workflow(best)
+
+tree_fit <- final_tree_wf %>% 
+  last_fit(split = mobile_split)
+
+tree_results <-  tree_fit %>% 
+  collect_predictions()
+
+roc_curve(tree_results, 
+          truth = ChurnYes, 
+          estimate = .pred_0) %>% 
+  autoplot()
+```
+
+```{r}
+set.seed(1)
+test_data[['ChurnYes']] = factor(test_data[['ChurnYes']])
+best_tree_model <- boost_tree(trees = best$trees,min_n = best$min_n) %>%
+  set_mode("classification") %>%
+  set_engine("xgboost") %>%
+  fit(ChurnYes ~ ., data=test_data)
+best_tree_model %>% predict(test_data) %>% 
+  bind_cols(test_data) %>% 
+  metrics(truth = ChurnYes, estimate = .pred_class)
+```
+
+The accuracy of the boosted tree model is about 81%.
+
+### KNN Model
+
+We will be using another method, KNN or k-nearest neighbors.
+
+We analyze the data using a KNN classification algorithm by creating dummy variables for categorical variables and normalizing the data, running the KNN model with parameters tuning and checking the accuracy and AUC statistics.Several parameters are used in the KNN model. We test it with various parameters and compare them to discover a reasonable set of parameters with the highest possible accuracy score on the data.
+
+
+```{r}
+set.seed(1)
+
+train_data[['ChurnYes']] = factor(train_data[['ChurnYes']])
+
+mobile_split <- initial_split(train_data, prop = 0.9, strata = ChurnYes)
+mobile_training <- mobile_split %>% training()
+mobile_test <- mobile_split %>% testing()
+
+
+mobile_folds <- vfold_cv(mobile_training, v = 10)
+
+
+mobile_recipe <- recipe(ChurnYes ~ ., data = train_data) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+mobile_recipe %>% 
+  prep(training = train_data) %>% 
+  bake(new_data = NULL)
+
+knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine('kknn') %>% 
+  set_mode('classification')
+
+knn_wf <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(mobile_recipe)
+
+k_grid <- tibble(neighbors = c(180, 190, 200, 210, 220, 230))
+
+set.seed(1)
+
+knn_tuning <- knn_wf %>% 
+  tune_grid(resamples = mobile_folds,
+            grid = k_grid)
+
+best_k <- knn_tuning %>% 
+  select_best(metric = 'roc_auc')
+
+final_knn_wf <- knn_wf %>% 
+  finalize_workflow(best_k)
+
+knn_fit <- final_knn_wf %>% 
+  last_fit(split = mobile_split)
+
+knn_results <-  knn_fit %>% 
+  collect_predictions()
+
+roc_curve(knn_results, 
+          truth = ChurnYes, 
+          estimate = .pred_0) %>% 
+  autoplot()
+```
+
+```{r}
+set.seed(1)
+test_data[['ChurnYes']] = factor(test_data[['ChurnYes']])
+best_knn_model <- nearest_neighbor(neighbors = best_k$neighbors) %>% 
+  set_engine('kknn') %>% 
+  set_mode('classification') %>%
+  fit(ChurnYes ~ ., data=test_data)
+best_knn_model %>% predict(test_data) %>% 
+  bind_cols(test_data) %>% 
+  metrics(truth = ChurnYes, estimate = .pred_class)
+```
+
+As we can see, the model has approximately 80.8% accuracy in predicting customer churn, which is a little bit higher than that of the previous model.
+
+
+### Random Forest
+
+Random forest is a popular machine learning ensemble technique. The model is made up of a number of decision trees, each of which takes a random sample of the data and selects a random subset of predictors, resulting in a set of decision trees that is relatively uncorrelated. After that, each tree provides a prediction, and the model's final prediction is determined by the class with the highest accuracy.
+
+```{r}
+set.seed(1)
+
+train_data[['ChurnYes']] = factor(train_data[['ChurnYes']])
+
+mobile_split <- initial_split(train_data, prop = 0.9, strata = ChurnYes)
+mobile_training <- mobile_split %>% training()
+mobile_test <- mobile_split %>% testing()
+
+mobile_folds <- vfold_cv(mobile_training, v = 3)
+
+
+mobile_recipe <- recipe(ChurnYes ~ ., data = train_data) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+mobile_recipe %>% 
+  prep(training = train_data) %>% 
+  bake(new_data = NULL)
+
+tree_model <-
+  rand_forest(trees = tune(),min_n = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+tree_wf <- workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(mobile_recipe)
+
+grid <- grid_regular(trees(), min_n(), levels = 5)
+
+
+tree_tuning <- tree_wf %>% 
+  tune_grid(resamples = mobile_folds,
+            grid = grid)
+
+best <- tree_tuning %>% 
+  select_best(metric = 'roc_auc')
+
+final_tree_wf <- tree_wf %>% 
+  finalize_workflow(best)
+
+tree_fit <- final_tree_wf %>% 
+  last_fit(split = mobile_split)
+
+tree_results <-  tree_fit %>% 
+  collect_predictions()
+
+roc_curve(tree_results, 
+          truth = ChurnYes, 
+          estimate = .pred_0) %>% 
+  autoplot()
+```
+
+```{r}
+test_data[['ChurnYes']] = factor(test_data[['ChurnYes']])
+best_tree_model <- rand_forest(trees = best$trees,min_n = best$min_n) %>%
+  set_mode("classification") %>%
+  set_engine("ranger") %>%
+  fit(ChurnYes ~ ., data=test_data)
+best_tree_model %>% predict(test_data) %>% 
+  bind_cols(test_data) %>% 
+  metrics(truth = ChurnYes, estimate = .pred_class)
+```
+
+The accuracy of the random forests model is about 85% which is higher than the previous models.
+
+### Support Vector Machine Model
+
+SVMs (support vector machines) are a type of statistical learning model that is frequently applied. It is nonparametric, which implies that it does not make any assumptions about the data. Our goal is to find a hyperplane that best divides the data and optimizes the distance between the classes of our response variable.
+
+```{r}
+train_data[['ChurnYes']] = factor(train_data[['ChurnYes']])
+
+mobile_split <- initial_split(train_data, prop = 0.9, strata = ChurnYes)
+mobile_training <- mobile_split %>% training()
+mobile_test <- mobile_split %>% testing()
+
+
+set.seed(1)
+mobile_folds <- vfold_cv(mobile_training, v = 3)
+
+
+
+mobile_recipe <- recipe(ChurnYes ~ ., data = train_data) %>% 
+  step_normalize(all_numeric(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+
+mobile_recipe %>% 
+  prep(training = train_data) %>% 
+  bake(new_data = NULL)
+
+svm_model <-
+  svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_wf <- workflow() %>% 
+  add_model(svm_model) %>% 
+  add_recipe(mobile_recipe)
+
+grid <- grid_regular(cost(),
+                     rbf_sigma(),
+                     levels = 5)
+
+set.seed(1)
+
+svm_tuning <- svm_wf %>% 
+  tune_grid(resamples = mobile_folds,
+            grid = grid)
+
+best <- svm_tuning %>% 
+  select_best(metric = 'roc_auc')
+
+final_svm_wf <- svm_wf %>% 
+  finalize_workflow(best)
+
+svm_fit <- final_svm_wf %>% 
+  last_fit(split = mobile_split)
+
+svm_results <-  svm_fit %>% 
+  collect_predictions()
+
+roc_curve(svm_results, 
+          truth = ChurnYes, 
+          estimate = .pred_0) %>% 
+  autoplot()
+
+```
+
+```{R}
+load('data/processed/test_data.Rdata')
+test_data[['ChurnYes']] = factor(test_data[['ChurnYes']])
+best_svm_model <- svm_rbf(cost = best$cost, rbf_sigma = best$rbf_sigma) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab") %>%
+  fit(ChurnYes ~ ., data=test_data)
+best_svm_model %>% predict(test_data) %>% 
+  bind_cols(test_data) %>% 
+  metrics(truth = ChurnYes, estimate = .pred_class)
+```
+
+The accuracy of the linear support vector machine is about 72% which is not an improvement from the previous models. 
+
+## Conclusion
+We discovered a few of correlations between the variables when analyzing the data. Following that, we decided to make four different models.These models are boosted tree model, knn model, random forest model, and SVM mode. The random forest model is the best at predicting the churn rate of a customer, based on the features the customers.
